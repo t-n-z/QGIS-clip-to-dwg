@@ -35,6 +35,7 @@ from qgis.core import (
     QgsTask,
     QgsApplication,
     QgsMessageLog,
+    QgsRenderContext,
     Qgis,
 )
 from qgis.gui import QgsMapTool, QgsRubberBand
@@ -402,6 +403,14 @@ class ClipToDwgPlugin:
         clipped_layers = []
         for lyr in layers:
             try:
+                is_polygon = (
+                    lyr.geometryType() == QgsWkbTypes.PolygonGeometry
+                )
+
+                # Pass 1: clip the layer normally. For polygons this gives
+                # the fill source for HATCH entities; outline strokes will
+                # be suppressed via the cloned renderer below. For lines
+                # and points, this is the only pass.
                 result = processing.run(
                     "native:clip",
                     {
@@ -413,7 +422,69 @@ class ClipToDwgPlugin:
                 clipped = result["OUTPUT"]
                 if clipped.featureCount() > 0:
                     clipped.setName(lyr.name())
+                    try:
+                        src_renderer = lyr.renderer()
+                        if src_renderer is not None:
+                            cloned = src_renderer.clone()
+                            self._disable_invisible_symbol_layers(cloned)
+                            if is_polygon:
+                                self._disable_polygon_stroke(cloned)
+                            clipped.setRenderer(cloned)
+                    except Exception as e:
+                        QgsMessageLog.logMessage(
+                            "Renderer clone failed for {}: {}".format(
+                                lyr.name(), e
+                            ),
+                            PLUGIN_NAME, Qgis.Warning,
+                        )
                     clipped_layers.append(clipped)
+
+                # Pass 2 (polygons only): convert polygon boundaries to
+                # lines first, then clip. Polygons that cross the bbox
+                # produce open polylines that stop at the bbox edge
+                # instead of closing along it.
+                #
+                # Pre-filter the source by bbox-intersection using a
+                # spatial index (extractbylocation) so polygonstolines
+                # only processes nearby polygons instead of every
+                # polygon in the layer. Big speedup on wide-area layers.
+                if is_polygon:
+                    try:
+                        subset_result = processing.run(
+                            "native:extractbylocation",
+                            {
+                                "INPUT": lyr,
+                                "INTERSECT": bbox_layer,
+                                "PREDICATE": [0],
+                                "OUTPUT": "memory:",
+                            },
+                        )
+                        subset_layer = subset_result["OUTPUT"]
+                        if subset_layer.featureCount() > 0:
+                            lines_result = processing.run(
+                                "native:polygonstolines",
+                                {"INPUT": subset_layer, "OUTPUT": "memory:"},
+                            )
+                            lines_layer = lines_result["OUTPUT"]
+                            clipped_lines_result = processing.run(
+                                "native:clip",
+                                {
+                                    "INPUT": lines_layer,
+                                    "OVERLAY": bbox_layer,
+                                    "OUTPUT": "memory:",
+                                },
+                            )
+                            clipped_lines = clipped_lines_result["OUTPUT"]
+                            if clipped_lines.featureCount() > 0:
+                                clipped_lines.setName(lyr.name())
+                                clipped_layers.append(clipped_lines)
+                    except Exception as e:
+                        QgsMessageLog.logMessage(
+                            "Boundary line pass failed for {}: {}".format(
+                                lyr.name(), e
+                            ),
+                            PLUGIN_NAME, Qgis.Warning,
+                        )
             except Exception as e:
                 QgsMessageLog.logMessage(
                     "Skipping {}: {}".format(lyr.name(), e),
@@ -473,6 +544,94 @@ class ClipToDwgPlugin:
 
         return tmpdir
 
+    def _disable_polygon_stroke(self, renderer):
+        """Suppress outline strokes on polygon fill symbol layers so the
+        clipped polygon only emits HATCH (no closed polyline outline along
+        the bbox edge). Boundary lines come from the separate boundary
+        pass.
+        """
+        try:
+            ctx = QgsRenderContext()
+            symbols = renderer.symbols(ctx)
+        except Exception:
+            return
+        for symbol in symbols:
+            if symbol is None:
+                continue
+            try:
+                count = symbol.symbolLayerCount()
+            except Exception:
+                continue
+            for i in range(count):
+                try:
+                    sl = symbol.symbolLayer(i)
+                except Exception:
+                    continue
+                if sl is None:
+                    continue
+                if hasattr(sl, "setStrokeStyle"):
+                    try:
+                        sl.setStrokeStyle(Qt.NoPen)
+                    except Exception:
+                        pass
+
+    def _disable_invisible_symbol_layers(self, renderer):
+        """Walk a renderer's symbols and disable any symbol layer that is
+        eye-toggled off, has fully transparent colour, or uses NoBrush
+        fill style. QgsDxfExport skips disabled symbol layers, so this
+        suppresses HATCH output for features the user has hidden.
+        """
+        try:
+            ctx = QgsRenderContext()
+            symbols = renderer.symbols(ctx)
+        except Exception:
+            return
+        for symbol in symbols:
+            if symbol is None:
+                continue
+            try:
+                count = symbol.symbolLayerCount()
+            except Exception:
+                continue
+            for i in range(count):
+                try:
+                    sl = symbol.symbolLayer(i)
+                except Exception:
+                    continue
+                if sl is None:
+                    continue
+                try:
+                    if not sl.enabled():
+                        continue
+                except Exception:
+                    pass
+                invisible = False
+                try:
+                    c = sl.color()
+                    if c is not None and c.alpha() == 0:
+                        invisible = True
+                except Exception:
+                    pass
+                try:
+                    if hasattr(sl, "brushStyle"):
+                        # Qt.NoBrush == 0
+                        if int(sl.brushStyle()) == 0:
+                            invisible = True
+                except Exception:
+                    pass
+                try:
+                    if hasattr(sl, "fillColor"):
+                        fc = sl.fillColor()
+                        if fc is not None and fc.alpha() == 0:
+                            invisible = True
+                except Exception:
+                    pass
+                if invisible:
+                    try:
+                        sl.setEnabled(False)
+                    except Exception:
+                        pass
+
     def _drop_invisible_hatches(self, dxf_path):
         """Remove HATCH entities whose DXF transparency (group code 440)
         indicates alpha byte = 0 (fully transparent). Preserves partially
@@ -530,13 +689,23 @@ class ClipToDwgPlugin:
         """Strip per-entity color/linetype/lineweight overrides in ENTITIES
         and BLOCKS sections so non-hatch entities default to ByLayer.
         HATCH entities are left untouched so fill colour, pattern, and
-        transparency (group code 440) survive.
+        transparency (group code 440) survive. Polyline width codes are
+        also stripped so polylines render at width 0.
         """
         # Group codes scrubbed from non-hatch entities:
         # 62 color index, 420 true color, 430 color name,
         # 440 transparency, 6 linetype, 370 lineweight
         scrub = {"62", "420", "430", "440", "6", "370"}
         keep_types = {"HATCH"}
+        # Type-specific scrub: codes whose meaning depends on entity type.
+        # LWPOLYLINE: 43 constant width, 40 start width, 41 end width.
+        # POLYLINE: 40 start width, 41 end width (per vertex via VERTEX).
+        # VERTEX (sub-entity of POLYLINE): 40 start width, 41 end width.
+        type_specific_scrub = {
+            "LWPOLYLINE": {"43", "40", "41"},
+            "POLYLINE": {"40", "41"},
+            "VERTEX": {"40", "41"},
+        }
 
         with open(dxf_path, "rb") as fh:
             raw = fh.read()
@@ -566,13 +735,14 @@ class ClipToDwgPlugin:
             elif code == "0" and in_scrub_section:
                 current_entity = value
 
-            if (
-                in_scrub_section
-                and current_entity not in keep_types
-                and code in scrub
-            ):
-                i += 2
-                continue
+            if in_scrub_section and current_entity not in keep_types:
+                if code in scrub:
+                    i += 2
+                    continue
+                extra = type_specific_scrub.get(current_entity)
+                if extra and code in extra:
+                    i += 2
+                    continue
 
             out.append(lines[i])
             out.append(lines[i + 1])
