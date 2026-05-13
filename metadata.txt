@@ -1,0 +1,25 @@
+[general]
+name=Clip to DWG
+qgisMinimumVersion=3.4
+description=Click or click-drag a box on the map to clip all visible vector layers and export them as a single DWG file.
+about=After clicking the toolbar button, either click two opposite corners on the map or click-drag a box. All visible vector layers are clipped at the box extents and saved as a DWG file. Polygon fill patterns are exported as DWG HATCH entities with their opacity preserved; fully transparent hatches are dropped. All other entities use ByLayer color, linetype and lineweight so appearance can be controlled in the CAD layer manager. Requires the free ODA File Converter from the Open Design Alliance for the final DXF to DWG conversion; the plugin will prompt for its executable path on first run and explain how to obtain it.
+version=1.0.0
+author=Tom M (CDSS)
+email=qgis@cdss.co.nz
+tracker=https://github.com/t-n-z/QGIS-clip-to-dwg/issues
+repository=https://github.com/t-n-z/QGIS-clip-to-dwg
+homepage=https://github.com/t-n-z/QGIS-clip-to-dwg
+category=Vector
+icon=icon.svg
+experimental=False
+deprecated=False
+tags=vector,dwg,dxf,cad,export,clip,autocad,oda,hatch
+changelog=
+    1.0.0
+      - First public release.
+      - Two selection modes: two-click corners or click-drag box.
+      - Visible vector layers clipped to bbox and exported to DWG via ODA File Converter.
+      - HATCH entities exported for QGIS fill patterns with opacity preserved.
+      - Fully transparent hatches dropped automatically.
+      - All non-hatch entities forced to ByLayer color, linetype and lineweight.
+      - First-run dialog explains ODA File Converter and links to download.
