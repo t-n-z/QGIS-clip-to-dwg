@@ -1,9 +1,9 @@
 [general]
 name=Clip to DWG
 qgisMinimumVersion=3.4
-description=Click or click-drag a box on the map to clip all visible vector layers and export them as a single DWG file.
-about=After clicking the toolbar button, either click two opposite corners on the map or click-drag a box. All visible vector layers are clipped at the box extents and saved as a DWG file. Polygon fill patterns are exported as DWG HATCH entities with their opacity preserved; fully transparent hatches are dropped. All other entities use ByLayer color, linetype and lineweight so appearance can be controlled in the CAD layer manager. Requires the free ODA File Converter from the Open Design Alliance for the final DXF to DWG conversion; the plugin will prompt for its executable path on first run and explain how to obtain it.
-version=1.0.1
+description=Click or click-drag a box on the map to clip the ticked vector layers and export them as a single DWG file.
+about=After clicking the toolbar button, either click two opposite corners on the map or click-drag a box. A pre-flight list then shows exactly which layers are going in, their geometry, how many features fall inside the box and what each will produce, with tick boxes to narrow the set. The chosen layers are clipped at the box extents and saved as a single DWG. Polygon fill patterns are exported as DWG HATCH entities with their opacity preserved; fully transparent hatches are dropped. Layers are written bottom-of-panel first so the top of the Layers panel ends up on top in CAD. All other entities use ByLayer colour, linetype and lineweight so appearance can be controlled in the CAD layer manager. Requires the free ODA File Converter from the Open Design Alliance for the final DXF to DWG conversion; the plugin will prompt for its executable path on first run and explain how to obtain it.
+version=1.1.0
 author=Tom M (CDSS)
 email=qgis@cdss.co.nz
 tracker=https://github.com/t-n-z/QGIS-clip-to-dwg/issues
@@ -13,8 +13,37 @@ category=Vector
 icon=icon.svg
 experimental=False
 deprecated=False
-tags=vector,dwg,dxf,cad,export,clip,autocad,oda,hatch
+tags=vector,dwg,dxf,cad,export,clip,autocad,oda,hatch,civil,surveying,12d
 changelog=
+    1.1.0
+      - FIXED: layers inside a group set to "Render Layers as a Group" were silently
+        left out of the export. The plugin took its input from checkedLayers(), which
+        returns the group composite (a QgsGroupLayer, not a vector layer) instead of
+        the layers inside it, so a whole group could vanish with no warning and the
+        DWG would come out holding only whatever else was ticked. Verified on a
+        TOP / GRP(A, B) tree: checkedLayers() returned ['TOP'] where the layer tree
+        holds ['TOP', 'A', 'B']. Enumeration now walks the layer tree itself.
+      - NEW: pre-flight list before every export - every layer going in, its geometry,
+        its feature count inside the box, and what it will produce (hatches + outlines,
+        lines, or points), with tick boxes to narrow the selection.
+      - NEW: draw order. Layers are written bottom-of-panel first, so the top of the
+        Layers panel lands on top in CAD. A layer's own hatch is still written before
+        its outlines. A custom layer order, where set, takes precedence.
+      - Per-layer accounting in the Log Messages panel every run: features in,
+        features exported, whether hatches were produced, and any error.
+      - Layers that produce nothing are now named in the message bar instead of
+        quietly missing from the output.
+      - A layer with no CRS is listed as unusable and skipped by name, rather than
+        QGIS raising an unexplained projection dialog part-way through the export.
+      - A polygon layer with no fill is called out in the pre-flight ("outlines only,
+        no hatches") - correct behaviour, but it should not be a surprise in CAD.
+      - FIXED: the internal clip box was built from the project CRS authid(), which is
+        empty for a custom CRS, leaving that layer without a CRS and triggering a
+        projection prompt with nothing to say what had asked for it.
+      - Errors in the clip and boundary-line passes are now recorded against the layer
+        rather than swallowed.
+      - Selecting/highlighting layers has never been what the plugin exports - it uses
+        the tick boxes. The "no layers" message now says so.
     1.0.1
       - Polylines now exported at width 0 (DXF group codes 43/40/41 stripped from LWPOLYLINE, POLYLINE, VERTEX).
       - Symbol layers that are eye-toggled off in QGIS, fully transparent, or set to NoBrush fill are honoured during export, suppressing HATCH output for features the user has hidden.

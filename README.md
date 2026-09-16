@@ -13,9 +13,14 @@ CAD tools.
 - Two selection modes:
   - **Two-click**: click one corner, move, click the opposite corner.
   - **Click-drag**: press, drag a box of at least 50 pixels, release.
-- Clips every visible vector layer at the box boundary (true geometric
-  intersection, not attribute filtering).
+- Shows a **pre-flight list** of exactly what is about to be exported: each
+  layer, its geometry type, how many features fall inside the box, and what it
+  will produce - with tick boxes to narrow the selection.
+- Clips the chosen layers at the box boundary (true geometric intersection,
+  not attribute filtering).
 - Exports the result as a single DWG file at a location you choose.
+- Writes layers **bottom of the Layers panel first**, so the top of the panel
+  ends up on top in CAD.
 - Polygon fill patterns are written as DWG `HATCH` entities, with their
   opacity preserved.
 - All other entities (lines, polylines, points, text) are written with
@@ -62,7 +67,7 @@ Then enable the plugin via the Plugin Manager.
 1. Make sure the vector layers you want to export are **visible** (ticked) in
    the Layers panel. Hidden layers and raster layers are ignored.
 2. Click the **Clip to DWG** toolbar button.
-3. On first run only or if dependency not found, a dialog explains the ODA File Converter requirement
+3. On first run only, a dialog explains the ODA File Converter requirement
    and asks you to point at its executable.
 4. Choose one of two selection modes on the map canvas:
    - **Two-click**: click one corner, move the mouse, click the opposite
@@ -86,15 +91,20 @@ project was using when you exported.
 
 ## Layer scope
 
-- "Visible" means vector layers ticked in the Layers panel.
-- Raster layers are silently ignored (DWG is vector only).
-- A visible layer with no features inside the box is silently skipped.
+- Layers are taken from the **tick boxes** in the Layers panel. Selecting or
+  highlighting a layer does not affect the export.
+- Layers inside a group set to **"Render Layers as a Group"** are included.
+  (They were not before 1.1.0 - see the changelog.)
+- Scale-dependent visibility is ignored: a ticked layer that is hidden at the
+  current zoom is still exported. The box you drew has nothing to do with the
+  zoom you happened to be at.
+- Raster layers are ignored (DWG is vector only).
+- A layer with no features inside the box, or no CRS, is listed as such in the
+  pre-flight and named in the message bar rather than quietly skipped.
 - Layer names in the DWG match the QGIS layer names.
 
 ## Known limitations
 
-- No way to pick a subset of visible layers (export is all-or-nothing for
-  visible vectors).
 - No numeric box entry.
 - DWG version is fixed at ACAD2018.
 - SVG fills, raster fills, and gradient fills do not translate to DWG
@@ -131,6 +141,53 @@ Bug reports and feature requests:
 Pull requests welcome.
 
 ## Changelog
+
+### 1.1.0
+
+**Fixed: whole groups of layers could be left out of the export, silently.**
+
+The plugin took its layer list from `checkedLayers()`. Once a group is set to
+**"Render Layers as a Group"** (QGIS 3.24+), that call returns the group
+*composite* - a `QgsGroupLayer`, which is not a vector layer - instead of the
+layers inside it. A vector-layer filter therefore discarded the group and
+everything in it, with no warning, and the DWG came out holding only whatever
+else happened to be ticked.
+
+Measured on a `TOP / GRP(A, B)` tree: `checkedLayers()` returns `['TOP']`
+where the layer tree holds `['TOP', 'A', 'B']`. Enumeration now walks the
+layer tree directly and resolves visibility up the parent chain.
+
+**Added**
+
+- A **pre-flight list** before every export: each layer going in, its geometry,
+  its feature count inside the box, and what it will produce (hatches +
+  outlines / lines / points), with tick boxes to narrow the set.
+- **Draw order.** Layers are written bottom-of-panel first, so the top of the
+  Layers panel lands on top in CAD. A layer's own hatch is still written before
+  its outlines. A custom layer order, where set, takes precedence.
+
+**Resiliency**
+
+- Per-layer accounting in the Log Messages panel every run: features in,
+  features exported, whether hatches were produced, and any error.
+- Layers that produced nothing are named in the message bar instead of going
+  missing from the output without comment.
+- A layer with **no CRS** is listed as unusable and skipped by name, rather
+  than QGIS raising an unexplained projection dialog part-way through.
+- A polygon layer with **no fill** is called out ("outlines only - no
+  hatches"). Correct behaviour, but it should not be a surprise in CAD.
+- Fixed: the internal clip box was built from the project CRS `authid()`, which
+  is empty for a **custom CRS**, leaving that layer CRS-less and triggering a
+  projection prompt with nothing to say what had asked for it.
+- Errors in the clip and boundary-line passes are recorded against the layer
+  instead of being swallowed.
+
+### 1.0.1
+
+- Polylines exported at width 0.
+- Symbol layers that are eye-toggled off, fully transparent, or set to NoBrush
+  are honoured, suppressing `HATCH` output for features hidden in QGIS.
+- Polygon boundaries are cut at the selection box instead of closing along it.
 
 ### 1.0.0
 
