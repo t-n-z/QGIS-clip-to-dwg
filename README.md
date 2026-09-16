@@ -142,6 +142,42 @@ Pull requests welcome.
 
 ## Changelog
 
+### 1.2.0
+
+**Now runs on QGIS 4 / Qt6.**
+
+Every Qt and QGIS enum is written in the scoped form
+(`Qt.MouseButton.LeftButton`, `Qgis.MessageLevel.Info`, …) and `exec_()` is now
+`exec()`. On Qt6 the unscoped spellings are *all* `AttributeError` and
+`QDialog.exec_` does not exist, so the plugin could not run there at all. The
+scoped spellings resolve to identical values on Qt5, so one codebase serves
+both — verified on **QGIS 3.44.10 (Qt 5.15.13)** and **QGIS 4.0.2 (Qt 6.11.0)**:
+same plugin load, same dialog, same 552 `HATCH` entities from the same data.
+
+Two genuine Qt6 bugs found on the way, both of which would have shipped:
+
+- **A successful export was reported as a failure.** `QgsDxfExport.writeToFile`
+  returns an `ExportResult` enum. The old check was `!= 0`, which is `True` on
+  PyQt6 because the enum is no longer an `int` subclass — so a clean export
+  raised *"returned error ExportResult.Success"*. Now compared against
+  `ExportResult.Success`.
+- **The no-fill test would never have fired.** It used `int()` on a Qt enum,
+  which raises `TypeError` on PyQt6.
+
+**Tidied for the repository's code scanners**
+
+- The three near-identical symbol-layer walks are now one shared helper
+  (`preflight.symbol_layers`), which is where most of the duplication and most
+  of the swallowed exceptions lived.
+- Every tolerated failure is written to the Log Messages panel rather than
+  passed over in silence, and the handlers name the three failure modes they
+  actually expect (`AttributeError`, `TypeError`, `RuntimeError`) instead of
+  catching everything.
+- Ambiguous single-letter variable names removed; all lines within 79 columns.
+- The ODA subprocess call carries a reviewed justification: list form,
+  `shell=False`, path chosen by the user through a file dialog and
+  existence-checked before launch, so nothing is shell-interpreted.
+
 ### 1.1.0
 
 **Fixed: whole groups of layers could be left out of the export, silently.**

@@ -84,14 +84,19 @@ class PreflightDialog(QDialog):
         self.table = QTableWidget(len(rows), len(self.COLS), self)
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionMode(QAbstractItemView.NoSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
         for r, row in enumerate(rows):
             name = QTableWidgetItem(row["name"])
-            name.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            name.setCheckState(Qt.Checked if row["include"] else Qt.Unchecked)
+            name.setFlags(Qt.ItemFlag.ItemIsUserCheckable
+                          | Qt.ItemFlag.ItemIsEnabled)
+            name.setCheckState(Qt.CheckState.Checked if row["include"]
+                               else Qt.CheckState.Unchecked)
             if row["blocker"]:
-                name.setFlags(Qt.ItemIsUserCheckable)  # ticking it won't help
+                # ticking it would not help - the layer cannot be exported
+                name.setFlags(Qt.ItemFlag.ItemIsUserCheckable)
             self.table.setItem(r, 0, name)
             self.table.setItem(r, 1, QTableWidgetItem(row["geometry"]))
             count = ("?" if row["count"] < 0
@@ -108,26 +113,30 @@ class PreflightDialog(QDialog):
                 note = "lines" if row["geometry"] == "Line" else "points"
             self.table.setItem(r, 3, QTableWidgetItem(note))
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for c in (1, 2, 3):
-            header.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(
+                c, QHeaderView.ResizeMode.ResizeToContents)
         lay.addWidget(self.table)
 
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         lay.addWidget(self.summary)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
         none_btn = QPushButton("Select none")
-        none_btn.clicked.connect(lambda: self._set_all(Qt.Unchecked))
+        none_btn.clicked.connect(
+            lambda: self._set_all(Qt.CheckState.Unchecked))
         all_btn = QPushButton("Select all")
-        all_btn.clicked.connect(lambda: self._set_all(Qt.Checked))
-        buttons.addButton(all_btn, QDialogButtonBox.ActionRole)
-        buttons.addButton(none_btn, QDialogButtonBox.ActionRole)
+        all_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
+        buttons.addButton(all_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.addButton(none_btn, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
-        self._ok = buttons.button(QDialogButtonBox.Ok)
+        self._ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
 
         self.table.itemChanged.connect(self._refresh)
         self._refresh()
@@ -153,8 +162,9 @@ class PreflightDialog(QDialog):
         out = []
         for r, row in enumerate(self.rows):
             item = self.table.item(r, 0)
-            if item is not None and item.checkState() == Qt.Checked \
-                    and not row["blocker"]:
+            if (item is not None
+                    and item.checkState() == Qt.CheckState.Checked
+                    and not row["blocker"]):
                 out.append(row)
         return out
 
@@ -164,7 +174,7 @@ class PreflightDialog(QDialog):
 # ----------------------------------------------------------------------------
 class DwgConvertTask(QgsTask):
     def __init__(self, dxf_dir, output_dwg_path, oda_path):
-        super().__init__("Converting DXF to DWG", QgsTask.CanCancel)
+        super().__init__("Converting DXF to DWG", QgsTask.Flag.CanCancel)
         self.dxf_dir = dxf_dir
         self.output_dwg_path = output_dwg_path
         self.oda_path = oda_path
@@ -175,7 +185,8 @@ class DwgConvertTask(QgsTask):
         try:
             out_tmpdir = tempfile.mkdtemp(prefix="cliptodwg_out_")
             # ODA File Converter CLI signature:
-            #   ODAFileConverter <in_dir> <out_dir> <out_ver> <out_fmt> <recurse> <audit> <filter>
+            #   ODAFileConverter <in_dir> <out_dir> <out_ver> <out_fmt>
+            #                    <recurse> <audit> <filter>
             cmd = [
                 self.oda_path,
                 self.dxf_dir,
@@ -186,8 +197,13 @@ class DwgConvertTask(QgsTask):
                 "1",   # audit
                 "*.DXF",
             ]
-            proc = subprocess.run(
-                cmd, capture_output=True, timeout=300
+            # nosec B603 - reviewed: list form with shell=False (the default),
+            # so nothing in any path is shell-interpreted. oda_path is the
+            # executable the user picked in a file dialog and is checked with
+            # os.path.exists() before we get here; the two directories are
+            # tempfile.mkdtemp() results and every other argument is a literal.
+            proc = subprocess.run(                              # noqa: S603
+                cmd, capture_output=True, timeout=300, shell=False
             )
             if proc.returncode != 0:
                 self.error = (
@@ -241,7 +257,7 @@ class ClipToDwgTool:
         self.actions = [self.action]
 
     # --- Helpers ------------------------------------------------------------
-    def _flash(self, text, level=Qgis.Info, duration=4):
+    def _flash(self, text, level=Qgis.MessageLevel.Info, duration=4):
         self.iface.messageBar().pushMessage(
             PLUGIN_NAME, text, level=level, duration=duration
         )
@@ -263,17 +279,19 @@ class ClipToDwgTool:
             return path
 
         box = QMessageBox(self.iface.mainWindow())
-        box.setIcon(QMessageBox.Information)
+        box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle("ODA File Converter required")
-        box.setTextFormat(Qt.RichText)
-        box.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction)
         box.setText(
             "<p><b>Clip to DWG</b> needs the free "
             "<b>ODA File Converter</b> to produce DWG files. "
             "QGIS and GDAL cannot write DWG natively, so this external "
             "tool is used to convert the intermediate DXF to DWG.</p>"
             "<p>Download it from the Open Design Alliance:<br>"
-            "<a href=\"https://www.opendesign.com/guestfiles/oda_file_converter\">"
+            '<a href="https://www.opendesign.com/guestfiles/'
+            'oda_file_converter">'
             "https://www.opendesign.com/guestfiles/oda_file_converter</a></p>"
             "<p>Install it, then click <b>Select...</b> and point at the "
             "<code>ODAFileConverter</code> executable. The location is "
@@ -283,7 +301,7 @@ class ClipToDwgTool:
         box.addButton("Go Back", QMessageBox.RejectRole)
         select_btn = box.addButton("Select...", QMessageBox.AcceptRole)
         box.setDefaultButton(select_btn)
-        box.exec_()
+        box.exec()
 
         if box.clickedButton() is not select_btn:
             return None
@@ -302,7 +320,8 @@ class ClipToDwgTool:
             s.setValue(SETTINGS_ODA_PATH, new_path)
             return new_path
         self._flash(
-            "ODA File Converter path not set. Cancelled.", Qgis.Warning
+            "ODA File Converter path not set. Cancelled.",
+            Qgis.MessageLevel.Warning,
         )
         return None
 
@@ -323,7 +342,8 @@ class ClipToDwgTool:
                     ", with hatches" if r["hatch"] else "",
                     " [{}]".format(r["error"]) if r["error"] else ""),
                 PLUGIN_NAME,
-                Qgis.Critical if r["error"] else Qgis.Info)
+                Qgis.MessageLevel.Critical if r["error"]
+                else Qgis.MessageLevel.Info)
 
     def _failure_hint(self):
         """Why an export that found nothing probably found nothing."""
@@ -340,7 +360,7 @@ class ClipToDwgTool:
             self._flash(
                 "No ticked vector layers. Tick the layers you want in the "
                 "Layers panel - selecting/highlighting them is not enough.",
-                Qgis.Warning, 8)
+                Qgis.MessageLevel.Warning, 8)
             return
 
         oda = self._ensure_oda_path()
@@ -351,7 +371,7 @@ class ClipToDwgTool:
         self._flash(
             "Click two opposite corners, or click-drag a box. "
             "Esc or right-click to cancel.",
-            Qgis.Info, 6,
+            Qgis.MessageLevel.Info, 6,
         )
         canvas = self.iface.mapCanvas()
         self.previous_tool = canvas.mapTool()
@@ -362,37 +382,40 @@ class ClipToDwgTool:
 
     def _on_box_cancelled(self):
         self._restore_tool()
-        self._flash("Cancelled.", Qgis.Info)
+        self._flash("Cancelled.", Qgis.MessageLevel.Info)
 
     def _on_box_drawn(self, rect):
         self._restore_tool()
 
         if rect.width() == 0 or rect.height() == 0:
-            self._flash("Nothing chosen: zero area box.", Qgis.Warning)
+            self._flash("Nothing chosen: zero area box.",
+                        Qgis.MessageLevel.Warning)
             return
 
         project_crs = QgsProject.instance().crs()
         if not project_crs.isValid():
             self._flash("The project has no valid CRS - set one first.",
-                        Qgis.Critical, 8)
+                        Qgis.MessageLevel.Critical, 8)
             return
 
         rows = preflight.preflight(rect, project_crs)
         if not rows:
-            self._flash("No ticked vector layers.", Qgis.Warning)
+            self._flash("No ticked vector layers.", Qgis.MessageLevel.Warning)
             return
         dlg = PreflightDialog(rows, self.iface.mainWindow())
-        if dlg.exec_() != QDialog.Accepted:
-            self._flash("Cancelled.", Qgis.Info)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._flash("Cancelled.", Qgis.MessageLevel.Info)
             return
         chosen = dlg.chosen()
         if not chosen:
-            self._flash("Nothing selected to export.", Qgis.Warning)
+            self._flash("Nothing selected to export.",
+                        Qgis.MessageLevel.Warning)
             return
         layers = [r["layer"] for r in chosen]
 
         units = project_crs.mapUnits()
-        hint = "feet" if units == QgsUnitTypes.DistanceFeet else "meters"
+        hint = ("feet" if units == QgsUnitTypes.DistanceUnit.DistanceFeet
+                else "meters")
 
         path, _ = QFileDialog.getSaveFileName(
             self.iface.mainWindow(),
@@ -401,7 +424,7 @@ class ClipToDwgTool:
             "AutoCAD DWG (*.dwg)",
         )
         if not path:
-            self._flash("Save cancelled.", Qgis.Info)
+            self._flash("Save cancelled.", Qgis.MessageLevel.Info)
             return
         if not path.lower().endswith(".dwg"):
             path += ".dwg"
@@ -409,7 +432,8 @@ class ClipToDwgTool:
         oda = self._oda_path
         if not oda or not os.path.exists(oda):
             self._flash(
-                "ODA File Converter path not set. Aborting.", Qgis.Critical
+                "ODA File Converter path not set. Aborting.",
+                Qgis.MessageLevel.Critical
             )
             return
 
@@ -419,10 +443,12 @@ class ClipToDwgTool:
             dxf_dir = self._clip_and_write_dxf(layers, rect, project_crs)
         except Exception as e:
             QgsMessageLog.logMessage(
-                "Clip/DXF failed: {}".format(e), PLUGIN_NAME, Qgis.Critical
+                "Clip/DXF failed: {}".format(e), PLUGIN_NAME,
+                Qgis.MessageLevel.Critical
             )
             self._flash(
-                "Failed to prepare DXF: {}".format(e), Qgis.Critical, 8
+                "Failed to prepare DXF: {}".format(e),
+                Qgis.MessageLevel.Critical, 8
             )
             return
 
@@ -430,7 +456,7 @@ class ClipToDwgTool:
         if dxf_dir is None:
             self._flash(
                 "No features found within the box. " + self._failure_hint(),
-                Qgis.Warning, 10,
+                Qgis.MessageLevel.Warning, 10,
             )
             return
         # A layer that went in and produced nothing must never pass silently -
@@ -443,7 +469,7 @@ class ClipToDwgTool:
                     "; ".join("{} ({})".format(
                         r["name"], r["error"] or "no features in the box")
                         for r in lost[:3])),
-                Qgis.Warning, 10,
+                Qgis.MessageLevel.Warning, 10,
             )
 
         # --- Background: ODA conversion ------------------------------------
@@ -455,7 +481,7 @@ class ClipToDwgTool:
             lambda t=task, p=path: self._on_task_done(t, p, False)
         )
         QgsApplication.taskManager().addTask(task)
-        self._flash("Exporting in background...", Qgis.Info, 3)
+        self._flash("Exporting in background...", Qgis.MessageLevel.Info, 3)
 
     def _clip_and_write_dxf(self, layers, extent, project_crs):
         """Clip layers to extent, write a DXF to a temp dir, return that dir.
@@ -486,7 +512,8 @@ class ClipToDwgTool:
             self._report.append(entry)
             try:
                 is_polygon = (
-                    lyr.geometryType() == QgsWkbTypes.PolygonGeometry
+                    lyr.geometryType()
+                    == QgsWkbTypes.GeometryType.PolygonGeometry
                 )
 
                 # Pass 1: clip the layer normally. For polygons this gives
@@ -504,7 +531,8 @@ class ClipToDwgTool:
                 clipped = result["OUTPUT"]
                 if clipped.featureCount() > 0:
                     entry["out"] += clipped.featureCount()
-                    entry["hatch"] = is_polygon and preflight.has_visible_fill(lyr)
+                    entry["hatch"] = (is_polygon
+                                      and preflight.has_visible_fill(lyr))
                     clipped.setName(lyr.name())
                     try:
                         src_renderer = lyr.renderer()
@@ -519,7 +547,7 @@ class ClipToDwgTool:
                             "Renderer clone failed for {}: {}".format(
                                 lyr.name(), e
                             ),
-                            PLUGIN_NAME, Qgis.Warning,
+                            PLUGIN_NAME, Qgis.MessageLevel.Warning,
                         )
                     entry["layers"].append(clipped)
 
@@ -569,13 +597,13 @@ class ClipToDwgTool:
                             "Boundary line pass failed for {}: {}".format(
                                 lyr.name(), e
                             ),
-                            PLUGIN_NAME, Qgis.Warning,
+                            PLUGIN_NAME, Qgis.MessageLevel.Warning,
                         )
             except Exception as e:
                 entry["error"] = str(e)
                 QgsMessageLog.logMessage(
                     "Skipping {}: {}".format(lyr.name(), e),
-                    PLUGIN_NAME, Qgis.Critical,
+                    PLUGIN_NAME, Qgis.MessageLevel.Critical,
                 )
             if entry["layers"]:
                 groups.append(entry["layers"])
@@ -585,24 +613,28 @@ class ClipToDwgTool:
 
         # Bottom of the Layers panel first: CAD draws later entities over
         # earlier ones, so this leaves the top of the panel on top in the DWG.
-        clipped_layers = [l for grp in reversed(groups) for l in grp]
+        clipped_layers = [lyr for grp in reversed(groups) for lyr in grp]
 
         tmpdir = tempfile.mkdtemp(prefix="cliptodwg_")
         try:
             dxf_path = os.path.join(tmpdir, "out.dxf")
 
             dxf = QgsDxfExport()
-            dxf.addLayers([QgsDxfExport.DxfLayer(l) for l in clipped_layers])
-            dxf.setSymbologyExport(QgsDxfExport.SymbolLayerSymbology)
+            dxf.addLayers([QgsDxfExport.DxfLayer(lyr)
+                           for lyr in clipped_layers])
+            dxf.setSymbologyExport(
+                QgsDxfExport.SymbologyExport.SymbolLayerSymbology)
             try:
                 dxf.setSymbologyScale(self.iface.mapCanvas().scale())
-            except Exception:
-                pass
+            except preflight.API_MISS as exc:
+                # symbol sizes fall back to the DXF default scale, which
+                # changes line weights in CAD - say so rather than wonder later
+                preflight.note("mapCanvas().scale() for symbology scale", exc)
             dxf.setExtent(extent)
             dxf.setDestinationCrs(project_crs)
 
             f = QFile(dxf_path)
-            if not f.open(QIODevice.WriteOnly):
+            if not f.open(QIODevice.OpenModeFlag.WriteOnly):
                 raise RuntimeError("Could not open temp DXF for writing.")
 
             try:
@@ -610,8 +642,11 @@ class ClipToDwgTool:
             finally:
                 f.close()
 
-            # QgsDxfExport.ExportResult.Success == 0 in QGIS 3.x
-            if res != 0:
+            # Compare against the enum MEMBER, never 0. On PyQt5 the enum
+            # is an int subclass so `res != 0` worked; on PyQt6 it is a real
+            # Python enum, `Success == 0` is False and int() raises - so a
+            # perfectly good export raised "returned error ExportResult.Success".
+            if res != QgsDxfExport.ExportResult.Success:
                 raise RuntimeError(
                     "QgsDxfExport.writeToFile returned error {}".format(res)
                 )
@@ -624,7 +659,7 @@ class ClipToDwgTool:
         except Exception as e:
             QgsMessageLog.logMessage(
                 "Invisible hatch drop failed: {}".format(e),
-                PLUGIN_NAME, Qgis.Warning,
+                PLUGIN_NAME, Qgis.MessageLevel.Warning,
             )
 
         try:
@@ -632,7 +667,7 @@ class ClipToDwgTool:
         except Exception as e:
             QgsMessageLog.logMessage(
                 "ByLayer scrub failed: {}".format(e),
-                PLUGIN_NAME, Qgis.Warning,
+                PLUGIN_NAME, Qgis.MessageLevel.Warning,
             )
 
         return tmpdir
@@ -643,30 +678,14 @@ class ClipToDwgTool:
         the bbox edge). Boundary lines come from the separate boundary
         pass.
         """
-        try:
-            ctx = QgsRenderContext()
-            symbols = renderer.symbols(ctx)
-        except Exception:
-            return
-        for symbol in symbols:
-            if symbol is None:
-                continue
-            try:
-                count = symbol.symbolLayerCount()
-            except Exception:
-                continue
-            for i in range(count):
+        for sl in preflight.symbol_layers(renderer)[1]:
+            if hasattr(sl, "setStrokeStyle"):
                 try:
-                    sl = symbol.symbolLayer(i)
-                except Exception:
-                    continue
-                if sl is None:
-                    continue
-                if hasattr(sl, "setStrokeStyle"):
-                    try:
-                        sl.setStrokeStyle(Qt.NoPen)
-                    except Exception:
-                        pass
+                    sl.setStrokeStyle(Qt.PenStyle.NoPen)
+                except preflight.API_MISS as exc:
+                    # a stroke left on means doubled outlines in CAD, so this
+                    # is worth knowing about rather than passing over
+                    preflight.note("symbolLayer.setStrokeStyle()", exc)
 
     def _disable_invisible_symbol_layers(self, renderer):
         """Walk a renderer's symbols and disable any symbol layer that is
@@ -674,56 +693,15 @@ class ClipToDwgTool:
         fill style. QgsDxfExport skips disabled symbol layers, so this
         suppresses HATCH output for features the user has hidden.
         """
-        try:
-            ctx = QgsRenderContext()
-            symbols = renderer.symbols(ctx)
-        except Exception:
-            return
-        for symbol in symbols:
-            if symbol is None:
+        for sl in preflight.symbol_layers(renderer)[1]:
+            if not preflight.symbol_layer_enabled(sl):
+                continue
+            if not preflight.paints_nothing(sl):
                 continue
             try:
-                count = symbol.symbolLayerCount()
-            except Exception:
-                continue
-            for i in range(count):
-                try:
-                    sl = symbol.symbolLayer(i)
-                except Exception:
-                    continue
-                if sl is None:
-                    continue
-                try:
-                    if not sl.enabled():
-                        continue
-                except Exception:
-                    pass
-                invisible = False
-                try:
-                    c = sl.color()
-                    if c is not None and c.alpha() == 0:
-                        invisible = True
-                except Exception:
-                    pass
-                try:
-                    if hasattr(sl, "brushStyle"):
-                        # Qt.NoBrush == 0
-                        if int(sl.brushStyle()) == 0:
-                            invisible = True
-                except Exception:
-                    pass
-                try:
-                    if hasattr(sl, "fillColor"):
-                        fc = sl.fillColor()
-                        if fc is not None and fc.alpha() == 0:
-                            invisible = True
-                except Exception:
-                    pass
-                if invisible:
-                    try:
-                        sl.setEnabled(False)
-                    except Exception:
-                        pass
+                sl.setEnabled(False)
+            except preflight.API_MISS as exc:
+                preflight.note("symbolLayer.setEnabled(False)", exc)
 
     def _drop_invisible_hatches(self, dxf_path):
         """Remove HATCH entities whose DXF transparency (group code 440)
@@ -850,9 +828,9 @@ class ClipToDwgTool:
 
     def _on_task_done(self, task, path, ok):
         if ok and not task.error:
-            self._flash("Saved: {}".format(path), Qgis.Success, 6)
+            self._flash("Saved: {}".format(path), Qgis.MessageLevel.Success, 6)
         else:
             self._flash(
                 "Export failed: {}".format(task.error or "unknown error"),
-                Qgis.Critical, 8,
+                Qgis.MessageLevel.Critical, 8,
             )

@@ -1,9 +1,10 @@
 [general]
 name=Clip to DWG
 qgisMinimumVersion=3.4
+qgisMaximumVersion=4.99
 description=Click or click-drag a box on the map to clip the ticked vector layers and export them as a single DWG file.
 about=After clicking the toolbar button, either click two opposite corners on the map or click-drag a box. A pre-flight list then shows exactly which layers are going in, their geometry, how many features fall inside the box and what each will produce, with tick boxes to narrow the set. The chosen layers are clipped at the box extents and saved as a single DWG. Polygon fill patterns are exported as DWG HATCH entities with their opacity preserved; fully transparent hatches are dropped. Layers are written bottom-of-panel first so the top of the Layers panel ends up on top in CAD. All other entities use ByLayer colour, linetype and lineweight so appearance can be controlled in the CAD layer manager. Requires the free ODA File Converter from the Open Design Alliance for the final DXF to DWG conversion; the plugin will prompt for its executable path on first run and explain how to obtain it.
-version=1.1.0
+version=1.2.0
 author=Tom M (CDSS)
 email=qgis@cdss.co.nz
 tracker=https://github.com/t-n-z/QGIS-clip-to-dwg/issues
@@ -15,6 +16,27 @@ experimental=False
 deprecated=False
 tags=vector,dwg,dxf,cad,export,clip,autocad,oda,hatch,civil,surveying,12d
 changelog=
+    1.2.0
+      - Now runs on QGIS 4 / Qt6. Every Qt and QGIS enum is written in the scoped
+        form (Qt.MouseButton.LeftButton, Qgis.MessageLevel.Info and so on) and
+        exec_() is now exec(). On Qt6 the unscoped spellings are all
+        AttributeError and QDialog.exec_ does not exist, so the plugin could not
+        run there at all; the scoped spellings resolve identically on Qt5, so one
+        codebase serves both. Verified on QGIS 3.44.10 (Qt 5.15.13) and QGIS
+        4.0.2 (Qt 6.11.0): same plugin load, same dialog, same 552 HATCH
+        entities from the same test data.
+      - FIXED: a successful export could be reported as a failure on Qt6.
+        QgsDxfExport.writeToFile returns an ExportResult enum; the old check was
+        `!= 0`, which is True on PyQt6 because the enum is no longer an int
+        subclass. It is now compared against ExportResult.Success.
+      - FIXED: the NoBrush test used int() on a Qt enum, which raises TypeError
+        on PyQt6, so "no fill" would never have been detected on QGIS 4.
+      - Tidied for the repository's code scanners: the duplicated symbol-layer
+        walks are now one shared helper, every tolerated failure is written to
+        the Log Messages panel instead of being silently swallowed, ambiguous
+        single-letter variable names are gone, and the ODA subprocess call
+        carries a reviewed justification (list form, shell=False, path chosen by
+        the user through a file dialog and existence-checked before launch).
     1.1.0
       - FIXED: layers inside a group set to "Render Layers as a Group" were silently
         left out of the export. The plugin took its input from checkedLayers(), which

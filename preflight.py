@@ -8,7 +8,8 @@ test_clip_dwg_preflight.py). No Qt widgets in here.
 
 The whole point of this module is that the old one-liner
 
-    [l for l in root.checkedLayers() if l.type() == QgsMapLayer.VectorLayer]
+    [lyr for lyr in root.checkedLayers()
+     if lyr.type() == QgsMapLayer.LayerType.VectorLayer]
 
 quietly lost layers. Two ways:
 
@@ -29,17 +30,41 @@ Scale-dependent visibility is deliberately IGNORED. A layer that is ticked but
 scale-hidden still exports: Tom's call, and the right one - the box you drew
 has nothing to do with the zoom you happened to be at.
 """
+from qgis.PyQt.QtCore import Qt
 from qgis.core import (
+    Qgis,
     QgsCoordinateTransform,
     QgsFeatureRequest,
     QgsMapLayer,
+    QgsMessageLog,
     QgsProject,
     QgsRenderContext,
     QgsWkbTypes,
 )
 
+LOG_TAG = "Clip to DWG"
+
 # Approximate counts stop being worth the wait past this many candidates.
 COUNT_CAP = 200000
+
+# Reaching into a QGIS symbol layer can fail three ways that are NOT bugs: the
+# method does not exist on this QGIS version (AttributeError), it wants
+# different arguments (TypeError), or the underlying C++ object has already
+# been deleted (RuntimeError). Those are tolerated and written down. Anything
+# else is a real fault and is allowed to escape rather than be swallowed.
+API_MISS = (AttributeError, TypeError, RuntimeError)
+
+
+def note(what, exc):
+    """Record a tolerated failure instead of passing over it in silence.
+
+    Silence is what let the group-layer bug hide for four months, and it is
+    what a security scanner objects to in a bare `except: pass`.
+    """
+    QgsMessageLog.logMessage(
+        "{} failed ({}: {}) - continuing".format(
+            what, type(exc).__name__, exc),
+        LOG_TAG, Qgis.MessageLevel.Warning)
 
 
 def node_checked(node):
@@ -62,9 +87,11 @@ def _order_key(root):
     try:
         if not root.hasCustomLayerOrder():
             return None
-        return {l.id(): i for i, l in enumerate(root.customLayerOrder())
-                if l is not None}
-    except Exception:  # noqa: BLE001
+        return {lyr.id(): i
+                for i, lyr in enumerate(root.customLayerOrder())
+                if lyr is not None}
+    except API_MISS as exc:
+        note("root.customLayerOrder()", exc)
         return None
 
 
@@ -84,7 +111,7 @@ def export_layers(project=None):
     found = []
     for pos, node in enumerate(root.findLayers()):
         layer = node.layer()
-        if layer is None or layer.type() != QgsMapLayer.VectorLayer:
+        if layer is None or layer.type() != QgsMapLayer.LayerType.VectorLayer:
             continue
         if not node_checked(node):
             continue
@@ -95,57 +122,119 @@ def export_layers(project=None):
     return [layer for _, _, layer in found]
 
 
-def has_visible_fill(layer):
-    """True if any enabled fill symbol layer would actually paint something.
+def symbol_layers(renderer):
+    """(readable, [symbol layers]) for every symbol in a renderer.
 
-    Mirrors the test `tool._disable_invisible_symbol_layers` applies: a fully
-    transparent colour or a NoBrush style paints nothing, so QgsDxfExport
-    writes no HATCH for it. Correct behaviour, but worth saying out loud in
-    the pre-flight rather than letting it surprise anyone in CAD.
+    One place for the defensive probing that used to be copy-pasted into three
+    near-identical walks - which is where most of a security scanner's
+    complaints about swallowed exceptions came from. `readable` is False only
+    when the renderer could not be read at all, which callers use to avoid
+    stating an answer they have not actually got.
     """
-    renderer = layer.renderer()
+    out = []
     if renderer is None:
-        return False
+        return True, out
     try:
-        symbols = renderer.symbols(QgsRenderContext())
-    except Exception:  # noqa: BLE001
-        return True          # can't tell - assume it paints, never under-report
-    for symbol in symbols or []:
+        symbols = renderer.symbols(QgsRenderContext()) or []
+    except API_MISS as exc:
+        note("renderer.symbols()", exc)
+        return False, out
+    for symbol in symbols:
         if symbol is None:
             continue
         try:
             count = symbol.symbolLayerCount()
-        except Exception:  # noqa: BLE001
+        except API_MISS as exc:
+            note("symbol.symbolLayerCount()", exc)
             continue
         for i in range(count):
             try:
                 sl = symbol.symbolLayer(i)
-            except Exception:  # noqa: BLE001
+            except API_MISS as exc:
+                note("symbol.symbolLayer({})".format(i), exc)
                 continue
-            if sl is None:
-                continue
+            if sl is not None:
+                out.append(sl)
+    return True, out
+
+
+def symbol_layer_enabled(sl):
+    """Whether the user has left this symbol layer switched on. Unreadable
+    counts as on - never drop something because a probe failed."""
+    try:
+        return bool(sl.enabled())
+    except API_MISS as exc:
+        note("symbolLayer.enabled()", exc)
+        return True
+
+
+def paints_nothing(sl):
+    """The invisibility test the exporter applies before disabling a symbol
+    layer: a fully transparent colour, a NoBrush style, or a fully transparent
+    fill colour. Kept exactly as it was - this decides what reaches CAD."""
+    invisible = False
+    try:
+        colour = sl.color()
+        if colour is not None and colour.alpha() == 0:
+            invisible = True
+    except API_MISS as exc:
+        note("symbolLayer.color()", exc)
+    brush = getattr(sl, "brushStyle", None)
+    if brush is not None:
+        try:
+            if brush() == Qt.BrushStyle.NoBrush:
+                invisible = True
+        except API_MISS as exc:
+            note("symbolLayer.brushStyle()", exc)
+    fill = getattr(sl, "fillColor", None)
+    if fill is not None:
+        try:
+            fc = fill()
+            if fc is not None and fc.alpha() == 0:
+                invisible = True
+        except API_MISS as exc:
+            note("symbolLayer.fillColor()", exc)
+    return invisible
+
+
+def has_visible_fill(layer):
+    """True if any enabled fill symbol layer would actually paint something.
+
+    A fully transparent colour or a NoBrush style paints nothing, so
+    QgsDxfExport writes no HATCH for it. Correct behaviour, but worth saying
+    out loud in the pre-flight rather than letting it surprise anyone in CAD.
+
+    Deliberately NOT the same test as `paints_nothing`: that one also treats a
+    transparent stroke colour as invisible, which is right for deciding what to
+    disable but wrong for deciding whether a hatch appears.
+    """
+    renderer = layer.renderer()
+    if renderer is None:
+        return False
+    readable, sym_layers = symbol_layers(renderer)
+    if not readable:
+        # can't tell - assume it paints, never under-report
+        return True
+    for sl in sym_layers:
+        if not symbol_layer_enabled(sl):
+            continue
+        brush = getattr(sl, "brushStyle", None)
+        if brush is not None:
             try:
-                if not sl.enabled():
+                if brush() == Qt.BrushStyle.NoBrush:
                     continue
-            except Exception:  # noqa: BLE001
-                pass
-            brush = getattr(sl, "brushStyle", None)
-            if brush is not None:
-                try:
-                    if int(brush()) == 0:       # Qt.NoBrush
-                        continue
-                except Exception:  # noqa: BLE001
-                    pass
-            fill = getattr(sl, "fillColor", None)
+            except API_MISS as exc:
+                note("symbolLayer.brushStyle()", exc)
+        fill = getattr(sl, "fillColor", None)
+        try:
+            colour = fill() if fill is not None else sl.color()
+        except API_MISS as exc:
+            note("symbolLayer.fillColor()/color()", exc)
             colour = None
-            try:
-                colour = fill() if fill is not None else sl.color()
-            except Exception:  # noqa: BLE001
-                colour = None
-            if colour is not None and colour.alpha() == 0:
-                continue
-            if fill is not None or brush is not None:
-                return True
+        if colour is not None and colour.alpha() == 0:
+            continue
+        if fill is not None or brush is not None:
+            return True
     return False
 
 
@@ -173,14 +262,15 @@ def count_in_box(layer, rect, project_crs, cap=COUNT_CAP):
             if n >= cap:
                 return n, True
         return n, False
-    except Exception:  # noqa: BLE001
+    except API_MISS as exc:
+        note("feature count for " + layer.name(), exc)
         return -1, False
 
 
 def describe(layer, rect, project_crs):
     """One pre-flight row: what this layer is, and what it will produce."""
     gtype = layer.geometryType()
-    is_polygon = gtype == QgsWkbTypes.PolygonGeometry
+    is_polygon = gtype == QgsWkbTypes.GeometryType.PolygonGeometry
     count, capped = count_in_box(layer, rect, project_crs)
 
     blocker = ""
@@ -215,4 +305,5 @@ def describe(layer, rect, project_crs):
 
 def preflight(rect, project_crs, project=None):
     """describe() every layer that would be exported, in draw order."""
-    return [describe(l, rect, project_crs) for l in export_layers(project)]
+    return [describe(lyr, rect, project_crs)
+            for lyr in export_layers(project)]

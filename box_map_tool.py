@@ -14,7 +14,9 @@ Restore DEM — amalgamated here so all of Tom's Toolbar shares one tool.
 """
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QCursor
-from qgis.core import QgsRectangle, QgsPointXY, QgsWkbTypes
+from qgis.core import (
+    Qgis, QgsMessageLog, QgsPointXY, QgsRectangle, QgsWkbTypes,
+)
 from qgis.gui import QgsMapTool, QgsRubberBand
 
 
@@ -29,18 +31,19 @@ class BoxMapTool(QgsMapTool):
         self.first_point = None
         self.press_screen_pos = None
 
-        self.rubber_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self.rubber_band = QgsRubberBand(
+            canvas, QgsWkbTypes.GeometryType.PolygonGeometry)
         self.rubber_band.setColor(QColor(255, 0, 0, 200))
         self.rubber_band.setFillColor(QColor(255, 0, 0, 40))
         self.rubber_band.setWidth(2)
 
-        self.setCursor(QCursor(Qt.CrossCursor))
+        self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
 
     def canvasPressEvent(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             self._cancel()
             return
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
 
         point = self.toMapCoordinates(event.pos())
@@ -53,7 +56,7 @@ class BoxMapTool(QgsMapTool):
             self.on_complete(rect)
 
     def canvasReleaseEvent(self, event):
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         if self.first_point is None or self.press_screen_pos is None:
             return
@@ -74,11 +77,11 @@ class BoxMapTool(QgsMapTool):
         self._draw_rect(self.first_point, current)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self._cancel()
 
     def _draw_rect(self, p1, p2):
-        self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.rubber_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
         corners = [
             QgsPointXY(p1.x(), p1.y()),
             QgsPointXY(p2.x(), p1.y()),
@@ -91,7 +94,7 @@ class BoxMapTool(QgsMapTool):
         self.rubber_band.addPoint(corners[0], True)
 
     def _cleanup(self):
-        self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.rubber_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
         self.canvas.unsetMapTool(self)
 
     def _cancel(self):
@@ -102,9 +105,14 @@ class BoxMapTool(QgsMapTool):
             from qgis.utils import iface
             if iface is not None:
                 iface.actionPan().trigger()
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError, ImportError) as exc:
+            # only the convenience fall-back to Pan; the tool is already
+            # disarmed, so this is cosmetic - but do not do it in silence
+            QgsMessageLog.logMessage(
+                "falling back to the Pan tool failed ({}: {})".format(
+                    type(exc).__name__, exc),
+                "Tom's Toolbar", Qgis.MessageLevel.Warning)
 
     def deactivate(self):
-        self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.rubber_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
         super().deactivate()
