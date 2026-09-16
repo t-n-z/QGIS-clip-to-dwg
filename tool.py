@@ -298,8 +298,9 @@ class ClipToDwgTool:
             "remembered for future runs.</p>"
             "<p>Click <b>Go Back</b> to cancel and come back later.</p>"
         )
-        box.addButton("Go Back", QMessageBox.RejectRole)
-        select_btn = box.addButton("Select...", QMessageBox.AcceptRole)
+        box.addButton("Go Back", QMessageBox.ButtonRole.RejectRole)
+        select_btn = box.addButton(
+            "Select...", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(select_btn)
         box.exec()
 
@@ -645,7 +646,8 @@ class ClipToDwgTool:
             # Compare against the enum MEMBER, never 0. On PyQt5 the enum
             # is an int subclass so `res != 0` worked; on PyQt6 it is a real
             # Python enum, `Success == 0` is False and int() raises - so a
-            # perfectly good export raised "returned error ExportResult.Success".
+            # perfectly good export raised "returned error
+            # ExportResult.Success".
             if res != QgsDxfExport.ExportResult.Success:
                 raise RuntimeError(
                     "QgsDxfExport.writeToFile returned error {}".format(res)
@@ -733,15 +735,15 @@ class ClipToDwgTool:
                         try:
                             alpha = int(ev) & 0xFF
                         except ValueError:
-                            pass
+                            # a 440 code that is not a number carries no
+                            # transparency, so the hatch is treated as opaque
+                            alpha = None
                     buf.append(lines[j])
                     buf.append(lines[j + 1])
                     j += 2
 
-                if alpha == 0:
-                    # Skip writing this entity entirely
-                    pass
-                else:
+                # alpha 0 means fully transparent: drop the entity entirely
+                if alpha != 0:
                     out.extend(buf)
                 i = j
                 continue

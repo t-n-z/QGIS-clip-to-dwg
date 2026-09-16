@@ -4,7 +4,7 @@ qgisMinimumVersion=3.4
 qgisMaximumVersion=4.99
 description=Click or click-drag a box on the map to clip the ticked vector layers and export them as a single DWG file.
 about=After clicking the toolbar button, either click two opposite corners on the map or click-drag a box. A pre-flight list then shows exactly which layers are going in, their geometry, how many features fall inside the box and what each will produce, with tick boxes to narrow the set. The chosen layers are clipped at the box extents and saved as a single DWG. Polygon fill patterns are exported as DWG HATCH entities with their opacity preserved; fully transparent hatches are dropped. Layers are written bottom-of-panel first so the top of the Layers panel ends up on top in CAD. All other entities use ByLayer colour, linetype and lineweight so appearance can be controlled in the CAD layer manager. Requires the free ODA File Converter from the Open Design Alliance for the final DXF to DWG conversion; the plugin will prompt for its executable path on first run and explain how to obtain it.
-version=1.2.0
+version=1.1.0
 author=Tom M (CDSS)
 email=qgis@cdss.co.nz
 tracker=https://github.com/t-n-z/QGIS-clip-to-dwg/issues
@@ -16,56 +16,29 @@ experimental=False
 deprecated=False
 tags=vector,dwg,dxf,cad,export,clip,autocad,oda,hatch,civil,surveying,12d
 changelog=
-    1.2.0
-      - Now runs on QGIS 4 / Qt6. Every Qt and QGIS enum is written in the scoped
-        form (Qt.MouseButton.LeftButton, Qgis.MessageLevel.Info and so on) and
-        exec_() is now exec(). On Qt6 the unscoped spellings are all
-        AttributeError and QDialog.exec_ does not exist, so the plugin could not
-        run there at all; the scoped spellings resolve identically on Qt5, so one
-        codebase serves both. Verified on QGIS 3.44.10 (Qt 5.15.13) and QGIS
-        4.0.2 (Qt 6.11.0): same plugin load, same dialog, same 552 HATCH
-        entities from the same test data.
-      - FIXED: a successful export could be reported as a failure on Qt6.
-        QgsDxfExport.writeToFile returns an ExportResult enum; the old check was
-        `!= 0`, which is True on PyQt6 because the enum is no longer an int
-        subclass. It is now compared against ExportResult.Success.
-      - FIXED: the NoBrush test used int() on a Qt enum, which raises TypeError
-        on PyQt6, so "no fill" would never have been detected on QGIS 4.
-      - Tidied for the repository's code scanners: the duplicated symbol-layer
-        walks are now one shared helper, every tolerated failure is written to
-        the Log Messages panel instead of being silently swallowed, ambiguous
-        single-letter variable names are gone, and the ODA subprocess call
-        carries a reviewed justification (list form, shell=False, path chosen by
-        the user through a file dialog and existence-checked before launch).
     1.1.0
-      - FIXED: layers inside a group set to "Render Layers as a Group" were silently
-        left out of the export. The plugin took its input from checkedLayers(), which
-        returns the group composite (a QgsGroupLayer, not a vector layer) instead of
-        the layers inside it, so a whole group could vanish with no warning and the
-        DWG would come out holding only whatever else was ticked. Verified on a
-        TOP / GRP(A, B) tree: checkedLayers() returned ['TOP'] where the layer tree
-        holds ['TOP', 'A', 'B']. Enumeration now walks the layer tree itself.
-      - NEW: pre-flight list before every export - every layer going in, its geometry,
-        its feature count inside the box, and what it will produce (hatches + outlines,
-        lines, or points), with tick boxes to narrow the selection.
-      - NEW: draw order. Layers are written bottom-of-panel first, so the top of the
-        Layers panel lands on top in CAD. A layer's own hatch is still written before
-        its outlines. A custom layer order, where set, takes precedence.
-      - Per-layer accounting in the Log Messages panel every run: features in,
-        features exported, whether hatches were produced, and any error.
-      - Layers that produce nothing are now named in the message bar instead of
-        quietly missing from the output.
+      - FIXED: layers inside a group set to "Render Layers as a Group" were left
+        out of the export with no warning, so the DWG could come out holding only
+        whatever else happened to be ticked.
+      - NEW: a pre-flight list before every export - every layer going in, its
+        geometry, how many features fall inside the box, and what it will produce
+        (hatches + outlines, lines, or points), with tick boxes to narrow the
+        selection.
+      - NEW: draw order. Layers are written bottom-of-panel first, so the top of
+        the Layers panel ends up on top in CAD. A layer's own hatch is still
+        written before its outlines, and a custom layer order takes precedence.
+      - NEW: runs on QGIS 4 as well as QGIS 3.
+      - Layers that produce nothing are named in the message bar instead of
+        quietly missing from the output, and each layer's feature counts are
+        written to the Log Messages panel.
       - A layer with no CRS is listed as unusable and skipped by name, rather than
         QGIS raising an unexplained projection dialog part-way through the export.
-      - A polygon layer with no fill is called out in the pre-flight ("outlines only,
-        no hatches") - correct behaviour, but it should not be a surprise in CAD.
-      - FIXED: the internal clip box was built from the project CRS authid(), which is
-        empty for a custom CRS, leaving that layer without a CRS and triggering a
-        projection prompt with nothing to say what had asked for it.
-      - Errors in the clip and boundary-line passes are now recorded against the layer
-        rather than swallowed.
-      - Selecting/highlighting layers has never been what the plugin exports - it uses
-        the tick boxes. The "no layers" message now says so.
+      - A polygon layer with no fill is called out in the pre-flight ("outlines
+        only, no hatches") instead of surprising you in CAD.
+      - FIXED: a project in a custom CRS could trigger a projection prompt during
+        the export with nothing to say what had asked for it.
+      - Selecting or highlighting layers has never been what the plugin exports -
+        it uses the tick boxes. The "no layers" message now says so.
     1.0.1
       - Polylines now exported at width 0 (DXF group codes 43/40/41 stripped from LWPOLYLINE, POLYLINE, VERTEX).
       - Symbol layers that are eye-toggled off in QGIS, fully transparent, or set to NoBrush fill are honoured during export, suppressing HATCH output for features the user has hidden.
