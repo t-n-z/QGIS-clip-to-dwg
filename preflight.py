@@ -34,10 +34,13 @@ from qgis.PyQt.QtCore import Qt
 from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
+    QgsCsException,
     QgsFeatureRequest,
     QgsMapLayer,
     QgsMessageLog,
+    QgsPointXY,
     QgsProject,
+    QgsRectangle,
     QgsRenderContext,
     QgsWkbTypes,
 )
@@ -251,7 +254,19 @@ def count_in_box(layer, rect, project_crs, cap=COUNT_CAP):
                 and layer.crs() != project_crs):
             tr = QgsCoordinateTransform(project_crs, layer.crs(),
                                         QgsProject.instance())
-            box = tr.transformBoundingBox(rect)
+            try:
+                box = tr.transformBoundingBox(rect)
+            except QgsCsException:
+                # Seen with EPSG:2039 -> EPSG:4326: the corners transform
+                # fine but transformBoundingBox's edge densification throws
+                # "Invalid coordinate", which took the whole pre-flight down.
+                pts = [tr.transform(QgsPointXY(x, y))
+                       for x in (rect.xMinimum(), rect.xMaximum())
+                       for y in (rect.yMinimum(), rect.yMaximum())]
+                box = QgsRectangle(min(p.x() for p in pts),
+                                   min(p.y() for p in pts),
+                                   max(p.x() for p in pts),
+                                   max(p.y() for p in pts))
         req = QgsFeatureRequest().setFilterRect(box).setNoAttributes()
         flags = getattr(QgsFeatureRequest, "NoGeometry", None)
         if flags is not None:
@@ -262,7 +277,9 @@ def count_in_box(layer, rect, project_crs, cap=COUNT_CAP):
             if n >= cap:
                 return n, True
         return n, False
-    except API_MISS as exc:
+    except API_MISS + (QgsCsException,) as exc:
+        # a layer that still cannot be reprojected shows "?" rather than
+        # aborting the export
         note("feature count for " + layer.name(), exc)
         return -1, False
 
