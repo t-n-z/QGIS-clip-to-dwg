@@ -672,6 +672,14 @@ class ClipToDwgTool:
                 PLUGIN_NAME, Qgis.MessageLevel.Warning,
             )
 
+        try:
+            self._escape_non_ascii(dxf_path)
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                "Non-ASCII escape failed: {}".format(e),
+                PLUGIN_NAME, Qgis.MessageLevel.Warning,
+            )
+
         return tmpdir
 
     def _disable_polygon_stroke(self, renderer):
@@ -827,6 +835,45 @@ class ClipToDwgTool:
 
         with open(dxf_path, "wb") as fh:
             fh.write(newline.join(out))
+
+    def _escape_non_ascii(self, dxf_path):
+        r"""Rewrite every non-ASCII character as a DXF \U+XXXX escape.
+
+        QgsDxfExport writes UTF-8 text but leaves $DWGCODEPAGE empty for
+        UTF-8, and an R2000 DXF is read in its ANSI code page - so ODA File
+        Converter decoded the UTF-8 bytes as ANSI_1252 and Hebrew, Arabic,
+        Cyrillic etc. layer names and labels came out as mojibake in the
+        DWG. \U+XXXX is the DXF escape AutoCAD and ODA decode in any string
+        whatever the code page, so the file ends up pure ASCII and the
+        names survive. An empty $DWGCODEPAGE is also filled in as
+        ANSI_1252 so the header is valid.
+        """
+        with open(dxf_path, "rb") as fh:
+            raw = fh.read()
+        text = raw.decode("utf-8", errors="replace")
+
+        def esc(ch):
+            # characters beyond the BMP go as a UTF-16 surrogate pair
+            units = ch.encode("utf-16-be")
+            return "".join(
+                "\\U+{:04X}".format(int.from_bytes(units[k:k + 2], "big"))
+                for k in range(0, len(units), 2)
+            )
+
+        text = "".join(ch if ord(ch) < 128 else esc(ch) for ch in text)
+
+        newline = "\r\n" if "\r\n" in text else "\n"
+        lines = text.split(newline)
+        for i in range(len(lines) - 3):
+            if (lines[i].strip() == "9"
+                    and lines[i + 1].strip() == "$DWGCODEPAGE"
+                    and lines[i + 2].strip() == "3"
+                    and not lines[i + 3].strip()):
+                lines[i + 3] = "ANSI_1252"
+                break
+
+        with open(dxf_path, "wb") as fh:
+            fh.write(newline.join(lines).encode("ascii"))
 
     def _on_task_done(self, task, path, ok):
         if ok and not task.error:
